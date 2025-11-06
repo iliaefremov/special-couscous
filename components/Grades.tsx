@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { GRADES_DATA } from '../constants';
 import type { SubjectGrade, TelegramUser } from './../types';
-import { getGrades } from '../services/googleSheetsService';
+import { getGrades, getAllowedUserIds } from '../services/googleSheetsService';
 import { SubjectGradeCard } from './SubjectGradeCard';
 import { RefreshIcon } from './icons/Icons';
 import BottomSheet from './BottomSheet';
@@ -79,6 +79,8 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
     () => MOTIVATIONAL_PHRASES[Math.floor(Math.random() * MOTIVATIONAL_PHRASES.length)]
   );
 
+  const [allowedUserIds, setAllowedUserIds] = useState<string[]>([]);
+
   const loadGrades = useCallback(async (userId: string) => {
     setIsLoading(true);
     setError(null);
@@ -94,6 +96,10 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
       }
 
       setUserGrades(filteredGrades);
+
+      const fetchedAllowedUserIds = await getAllowedUserIds();
+      setAllowedUserIds(fetchedAllowedUserIds);
+
     } catch (err) {
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : "Произошла неизвестная ошибка.";
@@ -116,6 +122,11 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
       setIsLoading(false);
     }
   }, [user, loadGrades]);
+
+  const isUserAllowed = useMemo(() => {
+    if (!user) return false;
+    return allowedUserIds.includes(user.id.toString());
+  }, [user, allowedUserIds]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -150,18 +161,18 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
   }, [isLoading, error]);
 
 
-  const gradesBySubject = useMemo(() => {
-    return userGrades.reduce((acc, grade) => {
+  const gradesBySubject = useMemo((): Record<string, GroupedGrades> => {
+    return userGrades.reduce<Record<string, GroupedGrades>>((acc, grade) => {
       if (!acc[grade.subject]) {
         acc[grade.subject] = { grades: [], avgScore: grade.avg_score };
       }
       acc[grade.subject].grades.push(grade);
       return acc;
-    }, {} as Record<string, GroupedGrades>);
+    }, {});
   }, [userGrades]);
 
   const overallStats = useMemo(() => {
-    const subjects = Object.values(gradesBySubject);
+    const subjects = Object.values(gradesBySubject) as GroupedGrades[];
     if (subjects.length === 0) {
         return { rating: '0.00', totalAbsences: 0 };
     }
@@ -178,15 +189,15 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
   const allUserRatings = useMemo(() => {
     if (allGrades.length === 0) return [];
     
-    const gradesByUserId = allGrades.reduce((acc, grade) => {
+    const gradesByUserId = allGrades.reduce<Record<string, SubjectGrade[]>>((acc, grade) => {
         if (!acc[grade.user_id]) acc[grade.user_id] = [];
         acc[grade.user_id].push(grade);
         return acc;
-    }, {} as Record<string, SubjectGrade[]>);
+    }, {});
 
     const ratings = Object.entries(gradesByUserId).map(([userId, grades]) => {
         const subjectAvgs = new Map<string, number>();
-        grades.forEach(g => {
+        (grades as SubjectGrade[]).forEach(g => {
             if (g.avg_score !== undefined) subjectAvgs.set(g.subject, g.avg_score);
         });
         const avgScores = Array.from(subjectAvgs.values());
@@ -219,16 +230,16 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
     });
   }, [allGrades, allUserRatings]);
 
-  const allAbsencesBySubject = useMemo(() => {
+  const allAbsencesBySubject = useMemo((): Record<string, SubjectGrade[]> => {
     return userGrades
         .filter(grade => grade.score === 'н')
-        .reduce((acc, absence) => {
+        .reduce<Record<string, SubjectGrade[]>>((acc, absence) => {
             if (!acc[absence.subject]) {
                 acc[absence.subject] = [];
             }
             acc[absence.subject].push(absence);
             return acc;
-        }, {} as Record<string, SubjectGrade[]>);
+        }, {});
   }, [userGrades]);
   
   const allStudentsAbsences = useMemo((): StudentAbsences[] => {
@@ -348,7 +359,7 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
                     <h4 className="font-bold text-text-primary dark:text-dark-text-primary mb-2">Темы для улучшения</h4>
                     <ul className="space-y-2 text-sm">
                         {topicsToImprove.map((grade, index) => (
-                            <li key={index} className="flex justify-between items-center bg-highlight dark:bg-dark-highlight p-3 rounded-lg">
+                            <li key={index} className="flex justify-between items-center bg-highlight dark:bg-dark-highlight p-2 rounded-lg">
                                 <div>
                                     <p className="font-semibold text-text-primary dark:text-dark-text-primary">{grade.topic}</p>
                                     <p className="text-xs text-text-secondary dark:text-dark-text-secondary">{formatDate(grade.date)}</p>
@@ -455,7 +466,9 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
           </div>
         
           <div className="space-y-6">
-              {Object.entries(gradesBySubject).map(([subject, { grades, avgScore }]) => (
+              {Object.entries(gradesBySubject).map(([subject, data]) => {
+                  const { grades, avgScore } = data as GroupedGrades;
+                  return (
                   <SubjectGradeCard 
                     key={subject} 
                     subject={subject} 
@@ -464,8 +477,7 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
                     onAbsencesClick={() => handleOpenAbsencesForSubject(subject)}
                     onAnalyticsClick={() => handleAnalyticsClick(subject)}
                   />
-              ))}
-          </div>
+              )})}          </div>
        </div>
       )}
 
@@ -481,7 +493,7 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
             >
                 🗓️ Мои отработки
             </button>
-            {user?.id.toString() === '1276188185' && (
+            {isUserAllowed && (
               <button 
                   onClick={() => setActiveAbsencesTab('overall')}
                   className={`flex-1 py-3 text-sm font-bold transition-colors ${activeAbsencesTab === 'overall' ? 'text-accent dark:text-dark-accent border-b-2 border-accent dark:border-dark-accent' : 'text-text-secondary dark:text-dark-text-secondary'}`}
@@ -498,7 +510,9 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
                 </p>
                 {Object.keys(allAbsencesBySubject).length > 0 ? (
                     <div className="space-y-6">
-                        {Object.entries(allAbsencesBySubject).map(([subject, absences]) => (
+                        {Object.entries(allAbsencesBySubject).map(([subject, absencesData]) => {
+                            const absences = absencesData as SubjectGrade[];
+                            return (
                             <div key={subject} ref={el => { absenceSubjectRefs.current[subject] = el; }} className="transition-all duration-500 -m-2 p-2">
                                 <h4 className="font-bold text-text-primary dark:text-dark-text-primary mb-2">{subject}</h4>
                                 <ul className="space-y-2 text-sm">
@@ -510,8 +524,7 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
                                     ))}
                                 </ul>
                             </div>
-                        ))}
-                    </div>
+                        )})}                    </div>
                 ) : (
                     <p className="text-center text-text-secondary dark:text-dark-text-secondary py-8">
                         У тебя нет ни одной отработки. Великолепная работа! ✨
@@ -520,7 +533,7 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
              </div>
         )}
 
-        {activeAbsencesTab === 'overall' && user?.id.toString() === '1276188185' && (
+        {activeAbsencesTab === 'overall' && isUserAllowed && (
             <div className="animate-fade-in">
                  <ul className="space-y-4">
                     {allStudentsAbsences.map(student => (
@@ -532,7 +545,9 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
                             <div className="text-xs text-text-secondary dark:text-dark-text-secondary mt-1">ID: {student.userId}</div>
                             {student.totalAbsences > 0 && (
                                <div className="mt-2 pt-2 border-t border-border-color dark:border-dark-border-color">
-                                 {Object.entries(student.absencesBySubject).map(([subject, absences]) => (
+                                 {Object.entries(student.absencesBySubject).map(([subject, absencesData]) => {
+                                   const absences = absencesData as { topic: string; date: string }[];
+                                   return (
                                    <div key={subject} className="mt-1">
                                      <p className="font-semibold text-xs text-text-primary dark:text-dark-text-primary">{subject}</p>
                                      <ul className="pl-2 mt-1 space-y-1">
@@ -544,8 +559,7 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
                                        ))}
                                      </ul>
                                    </div>
-                                 ))}
-                               </div>
+                                 )})}                               </div>
                             )}
                         </li>
                     ))}
@@ -562,11 +576,11 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
         <div className="flex border-b border-border-color dark:border-dark-border-color mb-4">
             <button 
                 onClick={() => setActiveRatingTab('myRating')}
-                className={`flex-1 py-3 text-sm font-bold transition-colors ${activeRatingTab === 'myRating' ? 'text-accent dark:text-dark-accent border-b-2 border-accent dark:border-dark-accent' : 'text-text-secondary dark:text-dark-text-secondary'}`}
+                className={`flex-1 py-3 text-sm font-bold transition-colors ${activeRatingTab === 'myRating' ? 'text-accent dark:text-dark-accent border-b-2 border-accent dark:border-dark-acцент' : 'text-text-secondary dark:text-dark-text-secondary'}`}
             >
                 🏆 Мой рейтинг
             </button>
-            {user?.id.toString() === '1276188185' && (
+            {isUserAllowed && (
               <button 
                   onClick={() => setActiveRatingTab('overall')}
                   className={`flex-1 py-3 text-sm font-bold transition-colors ${activeRatingTab === 'overall' ? 'text-accent dark:text-dark-accent border-b-2 border-accent dark:border-dark-accent' : 'text-text-secondary dark:text-dark-text-secondary'}`}
@@ -587,30 +601,35 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
                 <div className="text-center mb-6 pb-4 border-b border-border-color dark:border-dark-border-color">
                     <h3 className="text-2xl font-bold text-text-primary dark:text-dark-text-primary">{displayName}</h3>
                     {rankingStats.rank > 0 && (
-                         <p className="font-semibold text-accent dark:text-dark-accent mt-1">
+                         <p className="font-semibold text-accent dark:text-dark-acцент mt-1">
                             {rankingStats.rank} место из {rankingStats.total}
                         </p>
                     )}
                 </div>
                 <div className="flex justify-between items-center bg-highlight dark:bg-dark-highlight p-4 rounded-xl mb-6">
                     <span className="font-bold text-text-secondary dark:text-dark-text-secondary">Общий средний балл</span>
-                    <span className="font-bold text-2xl text-accent dark:text-dark-accent">{overallStats.rating}</span>
+                    <span className="font-bold text-2xl text-accent dark:text-dark-acцент">{overallStats.rating}</span>
                 </div>
                 <div>
                     <h4 className="font-bold text-text-primary dark:text-dark-text-primary mb-2">Средние баллы по предметам:</h4>
                     <ul className="space-y-2 text-sm">
-                        {Object.entries(gradesBySubject).sort(([, a], [, b]) => (b.avgScore ?? 0) - (a.avgScore ?? 0)).map(([subject, { avgScore }]) => (
+                        {Object.entries(gradesBySubject).sort(([, aData], [, bData]) => {
+                            const a = aData as GroupedGrades;
+                            const b = bData as GroupedGrades;
+                            return (b.avgScore ?? 0) - (a.avgScore ?? 0);
+                        }).map(([subject, data]) => {
+                            const { avgScore } = data as GroupedGrades;
+                            return (
                             <li key={subject} className="flex justify-between items-center bg-highlight dark:bg-dark-highlight p-3 rounded-lg">
                                 <span className="text-text-secondary dark:text-dark-text-secondary">{subject}</span>
                                 <span className="font-bold text-text-primary dark:text-dark-text-primary">{avgScore?.toFixed(2) ?? 'N/A'}</span>
                             </li>
-                        ))}
-                    </ul>
+                        )})}                    </ul>
                 </div>
             </div>
         )}
         
-        {activeRatingTab === 'overall' && user?.id.toString() === '1276188185' && fullLeaderboardData.length > 0 && (
+        {activeRatingTab === 'overall' && isUserAllowed && fullLeaderboardData.length > 0 && (
             <div className="animate-fade-in">
                 <p className="text-left text-xs text-text-secondary dark:text-dark-text-secondary mb-4">
                     Эксклюзивная панель с полным рейтингом группы.
@@ -629,7 +648,7 @@ const Grades: React.FC<GradesProps> = ({ user }) => {
                                 {Object.entries(student.subjectAverages).map(([subject, score]) => (
                                     <li key={subject} className="flex justify-between">
                                         <span className="truncate pr-2 opacity-80">{subject}</span>
-                                        <span className="font-medium whitespace-nowrap">{score.toFixed(2)}</span>
+                                        <span className="font-medium whitespace-nowrap">{(score as number).toFixed(2)}</span>
                                     </li>
                                 ))}
                             </ul>

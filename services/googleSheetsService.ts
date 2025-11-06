@@ -3,6 +3,7 @@ import type { SubjectGrade } from '../types';
 // URL для опубликованной в веб-доступе Google Таблицы в формате CSV.
 const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRf6H54cEZ1qHEv6cls6VGdlSm3TsdaMjah9G7FZtnM6caSgF9W0jQiUUyWlKGcNxV2VWG2VJCEJDzy/pub?output=csv';
 const HOMEWORK_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTE-dl9HZNTJa2KADj6mQzi_msTexolAVgvNETQfLgSce8EU2Qin-UDxl1biiI3cjR48meMLcgEAbJO/pub?gid=0&single=true&output=csv';
+const ALLOWED_USERS_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRf6H54cEZ1qHEv6cls6VGdlSm3TsdaMjah9G7FZtnM6caSgF9W0jQiUUyWlKGcNxV2VWG2VJCEJDzy/pub?gid=1661116273&single=true&output=csv';
 
 /**
  * Парсит одну строку CSV, корректно обрабатывая значения в кавычках.
@@ -183,4 +184,19 @@ export const getHomeworks = async (): Promise<any[]> => {
         console.error(`Ошибка при загрузке ДЗ:`, error);
         throw new Error('Не удалось загрузить домашние задания.');
     }
+};
+
+export const getAllowedUserIds = async (): Promise<string[]> => {
+  try {
+    const response = await fetch(`${ALLOWED_USERS_SPREADSHEET_URL}&_=${new Date().getTime()}`);
+    if (!response.ok) {
+      throw new Error(`Сетевой ответ не был успешным. Статус: ${response.status}`);
+    }
+    const csvText = await response.text();
+    const rows = csvText.trim().split(/\r?\n/);
+    return rows.map(row => parseCsvRow(row)[0]?.trim()).filter((id): id is string => !!id);
+  } catch (error) {
+    console.error(`Ошибка при загрузке списка разрешенных пользователей:`, error);
+    throw new Error('Не удалось загрузить список разрешенных пользователей из Google Sheets.');
+  }
 };
